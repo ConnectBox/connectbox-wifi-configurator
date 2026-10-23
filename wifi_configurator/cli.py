@@ -57,25 +57,25 @@ def hostapd_conf_as_config(filename):
 #  to start
 
 def get_current_ssid(config):
-    """Return the SSID to broadcast, derived from the brand name in brand.j2.
+  """Return the SSID to broadcast, derived from the brand name in brand.j2.
 
-    Reads the 'Brand' key from /usr/local/connectbox/brand.j2 (JSON) and
-    appends DEFAULT_SSID (' - Free Media') to form the full SSID string.
-    Falls back to 'ConnectBox - Free Media' if the file is missing, empty,
-    or contains invalid JSON — so hostapd can always start even on a partially
-    provisioned device.
+  Reads the 'Brand' key from /usr/local/connectbox/brand.j2 (JSON) and
+  appends DEFAULT_SSID (' - Free Media') to form the full SSID string.
+  Falls back to 'ConnectBox - Free Media' if the file is missing, empty,
+  or contains invalid JSON — so hostapd can always start even on a partially
+  provisioned device.
 
-    Parameters
-    ----------
-    config : configobj.ConfigObj
-        Parsed hostapd.conf (not currently used; kept for API symmetry with
-        other get_current_* functions).
+  Parameters
+  ----------
+  config : configobj.ConfigObj
+      Parsed hostapd.conf (not currently used; kept for API symmetry with
+      other get_current_* functions).
 
-    Returns
-    -------
-    str
-        Full SSID string, e.g. 'MyOrg - Free Media'.
-    """
+  Returns
+  -------
+  str
+      Full SSID string, e.g. 'MyOrg - Free Media'.
+  """
 # Using a dictionary and json to store Branding stuff
 # Set a fallback name in case the file is 'busted'
   brand_name = "ConnectBox"
