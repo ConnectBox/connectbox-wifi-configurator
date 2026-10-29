@@ -24,6 +24,19 @@ INTERFACE = 'wlan0'
 
 
 
+def run_by_ifupdown_for(interface):
+    """True when ifupdown is running this program as a hook for `interface`.
+
+    The ConnectBox /etc/network/interfaces runs wifi_configurator as the AP
+    interface's "pre-up" command.  ifupdown gives hook commands IFACE (the
+    interface) and PHASE (pre-up, up, ...), and it refuses a nested ifdown or
+    ifup of the interface it is bringing up ("ifdown: recursion detected for
+    interface wlan0 in pre-up phase").  Those calls did nothing then, so they
+    are skipped; ifupdown carries on bringing the interface up itself.
+    """
+    return bool(os.environ.get("PHASE")) and os.environ.get("IFACE") == interface
+
+
 @functools.lru_cache()
 def hostapd_conf_as_config(filename):
     """Load and cache a hostapd.conf file as a ConfigObj dict.
@@ -454,7 +467,12 @@ def main(filename, interface, ssid, channel, output, wpa_passphrase, sync,
                     country_code,
                     ",".join([str(i) for i in valid_channels_for_cc])))
     logging.info("AP channel is now: "+str(channel))
-    res = os.system( "ifdown "+interface)
+    in_ifupdown = run_by_ifupdown_for(interface)
+    if in_ifupdown:
+        click.echo("Run by ifupdown (%s) for %s: not calling ifdown/ifup" %
+                   (os.environ.get("PHASE"), interface))
+    else:
+        res = os.system( "ifdown "+interface)
     res = os.system( "systemctl stop hostapd")
     file_loader = jinja2.PackageLoader('wifi_configurator')
     env = jinja2.Environment(
@@ -493,7 +511,8 @@ def main(filename, interface, ssid, channel, output, wpa_passphrase, sync,
         subprocess.run("/bin/sync")
     res = os.system("systemctl start wpa_supplicant")
     res = os.system("systemctl start hostapd")
-    res = os.system("ifup "+interface)
+    if not in_ifupdown:
+        res = os.system("ifup "+interface)
     res = os.system("systemctl restart hostapd")
     res = os.system("systemctl restart dnsmasq")
     time.sleep(4)
