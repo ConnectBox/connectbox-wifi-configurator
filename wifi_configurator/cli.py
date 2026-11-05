@@ -399,7 +399,9 @@ def main(filename, interface, ssid, channel, output, wpa_passphrase, sync,
 
     Parameters are supplied by Click from the decorated options above.
     """
-    sys.path.append('/usr/local/connectbox/wifi_configurator_venv/lib/python3.9/site-packages/wifi_configurator')
+    # adapters.py and scan.py are next to this file; the folder was named
+    #  python3.9 here, which only worked on Python 3.9 (Trixie has 3.13)
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
     import adapters
     import scan
 

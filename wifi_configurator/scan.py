@@ -1,5 +1,6 @@
 import collections
 import functools
+import os
 from pathlib import Path
 import subprocess
 import re
@@ -210,7 +211,7 @@ def get_freq_signal_tuples_from_iw_output(iw_output):
         # freq: 2412
         if line.startswith("freq:"):
             _, freq_str = line.split(":")
-            freq = int(freq_str)
+            freq = int(float(freq_str))   # newer iw prints "2447.0" (Trixie, 2026-11-04)
             continue
 
         # signal: -48.00 dBm
@@ -380,7 +381,10 @@ def get_country_rules_block(country_code, lines):
             else:
                 # We're at the end of the country block
                 return country_lines
-        elif (not (line.find(country_code) >=0)):
+        # Match the "country XX:" header only: the code also appears inside
+        #  other lines (AU in AUTO-BW, IR in NO-IR, JP in DFS-JP), which picked
+        #  the wrong block for AU, NO, IR, TD, DM, DO, SE, ET and JP.
+        elif not line.startswith("country %s:" % country_code):
             continue
         in_country_block = True
         country_lines.append(line)
@@ -540,9 +544,18 @@ def channels_for_country(country_code):
     list of int
         Legal channel numbers for this country, e.g. [1, 2, 3, ..., 11] for 'US'.
     """
-    regdump = subprocess.run(["/sbin/regdbdump", "/lib/crda/regulatory.bin"],
-                             stdout=subprocess.PIPE)
-    lines = regdump.stdout.decode('utf-8').split("\n")
+    if os.path.exists("/sbin/regdbdump") and os.path.exists("/lib/crda/regulatory.bin"):
+        regdump = subprocess.run(["/sbin/regdbdump", "/lib/crda/regulatory.bin"],
+                                 stdout=subprocess.PIPE)
+        lines = regdump.stdout.decode('utf-8').split("\n")
+    else:
+        # No crda (Debian 13 / Raspberry Pi OS Trixie): read wireless-regdb's
+        #  regulatory.db, the file the kernel itself uses, in the same text form
+        try:
+            import regdb                         # cli.py puts this folder on sys.path
+        except ImportError:
+            from wifi_configurator import regdb  # imported as a package (tests)
+        lines = regdb.dump_lines()
     country_rules_block = get_country_rules_block(country_code, lines)
     frequency_blocks = get_frequency_blocks_from_country_block(country_code, country_rules_block)
     frequency_blocks = flatten_frequency_blocks(frequency_blocks)
