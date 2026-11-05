@@ -512,10 +512,13 @@ def main(filename, interface, ssid, channel, output, wpa_passphrase, sync,
     if sync and output != sys.stdout:
         subprocess.run("/bin/sync")
     res = os.system("systemctl start wpa_supplicant")
-    res = os.system("systemctl start hostapd")
     if not in_ifupdown:
         res = os.system("ifup "+interface)
-    res = os.system("systemctl restart hostapd")
+    # Start hostapd once, with the new hostapd.conf (2026-11-05: it was
+    #  started and restarted again within a second, on top of systemd's own
+    #  start at boot; the RTL8812AU's 8812au driver did not always survive
+    #  that, and the AP's beacon came and went).
+    res = os.system("systemctl reset-failed hostapd 2>/dev/null; systemctl restart hostapd")
     res = os.system("systemctl restart dnsmasq")
     time.sleep(4)
     return 0
