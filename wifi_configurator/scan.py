@@ -135,6 +135,10 @@ def get_consensus_regdomain_from_iw_output(iw_output):
     return ""
 
 
+# Longest one `iw dev <if> scan` may take (a normal scan takes a few seconds).
+SCAN_TIMEOUT_SECS = 30
+
+
 @functools.lru_cache()
 def get_scan_output(wlan_if):
     """Run 'iw dev scan' and return the raw output, retrying up to 5 times.
@@ -164,14 +168,22 @@ def get_scan_output(wlan_if):
         a = ""
         b = 0
         # Retry loop: a freshly-up interface may return empty on the first scan.
+        # Each scan is limited to SCAN_TIMEOUT_SECS (2026-11-05: on a CM4 an
+        #  `iw dev wlan0 scan` on the built-in brcmfmac hung for over 7
+        #  minutes at boot; this runs in the AP interface's ifup pre-up, so
+        #  ifup never finished, PxUSBm's ifdown waited for it and the box had
+        #  no AP).  A scan that times out counts as an empty one.
         while a == "" and b < 5:
-            iw = subprocess.run([
-                "/sbin/iw",
-                "dev",
-                wlan_if.dev,
-                "scan"
-            ], stdout=subprocess.PIPE)
-            a = iw.stdout.decode("utf-8")
+            try:
+                iw = subprocess.run([
+                    "/sbin/iw",
+                    "dev",
+                    wlan_if.dev,
+                    "scan"
+                ], stdout=subprocess.PIPE, timeout=SCAN_TIMEOUT_SECS)
+                a = iw.stdout.decode("utf-8")
+            except subprocess.TimeoutExpired:
+                a = ""
             b += 1
             if a == "": time.sleep(2)
     return a
