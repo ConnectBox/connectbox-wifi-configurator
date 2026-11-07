@@ -449,15 +449,17 @@ def main(filename, interface, ssid, channel, output, wpa_passphrase, sync,
         # Choose an uncontested channel, or a random one if there aren't any
         # MEH that we respecify wlan_if when we've used it to scan just a bit
         #  earlier
+        # Least-interfered channel by signal strength and overlap; the current
+        #  channel is kept unless another is clearly better (2026-11-06)
         channel = scan.get_available_uncontested_channel(
-            valid_channels_for_cc, scan_output
+            valid_channels_for_cc, scan_output, get_current_channel(config)
         )
         if (not channel and len(valid_channels_for_cc) > 0):
             channel = random.choice(valid_channels_for_cc)
-            click.echo("No uncontested channels. Choosing %s at random" %
+            click.echo("No channel could be scored. Choosing %s at random" %
                        (channel,))
         else:
-            click.echo("Channel %s is uncontested and is now the new channel" %
+            click.echo("Channel %s is now the access point channel" %
                        (channel,))
            
     else:

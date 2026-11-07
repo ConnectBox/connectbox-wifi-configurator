@@ -262,6 +262,7 @@ def get_max_signal_at_each_freq(freq_signal_tuples):
                 freq_signal_map[freq] = signal
         else:
             freq_signal_map[freq] = signal
+    return freq_signal_map
 
 
 def channel_overlaps_with_others(all_channel, channel_list):
@@ -304,37 +305,153 @@ def channel_overlaps_with_others(all_channel, channel_list):
         return (random.choice(all_channel))
 
 
-def get_available_uncontested_channel(all_available_channels, scan_output):
-    """Select a channel that is not currently used by any nearby AP.
+# 2.4 GHz channels are 5 MHz apart and an OFDM channel is 20 MHz wide, so a
+#  network N channels away shares (20 - 5*N)/20 of our band: all of it on the
+#  same channel, 3/4 one channel away, 1/2 at two, 1/4 at three, none at four
+#  or more.  (Kirk, 2026-11-06: the old code only skipped the exact channels in
+#  use and picked at random, so it chose 9 between busy 8 and 10.)
+CHANNEL_SPACING_MHZ_24 = 5
 
-    Extracts in-use channels from the scan output, logs available vs. used
-    sets for debugging, then delegates to channel_overlaps_with_others() for
-    the final selection.
+# Keep the channel the access point already has unless another channel's
+#  interference score is lower by more than this factor (2 = 3 dB).  Every
+#  restart of the AP used to move it to a new random channel, so phones lost it.
+KEEP_CURRENT_FACTOR = 2.0
+
+# Channels that do not overlap each other; preferred when scores tie.
+NON_OVERLAPPING_24 = (1, 6, 11)
+
+
+def overlap_fraction(channel_a, channel_b):
+    """Return the share (0.0-1.0) of channel_a's 20 MHz band that channel_b covers.
 
     Parameters
     ----------
-    all_available_channels : list of int
-        Channels permitted by the regulatory domain for this country code.
-    scan_output : str
-        Raw 'iw dev scan' output.
+    channel_a, channel_b : int
+        2.4 GHz channel numbers.
+
+    Returns
+    -------
+    float
+        1.0 for the same channel, 0.75 one channel apart, 0.5 two apart,
+        0.25 three apart, 0.0 four or more apart.
+    """
+    distance_mhz = abs(channel_a - channel_b) * CHANNEL_SPACING_MHZ_24
+    return max(0.0, (CHANNEL_WIDTH_MHZ_24 - distance_mhz) / CHANNEL_WIDTH_MHZ_24)
+
+
+def channel_interference_scores(candidate_channels, freq_signal_tuples):
+    """Score each candidate channel by the interference it would receive.
+
+    Every network heard in the scan adds its signal power (converted from dBm
+    to milliwatts, so a strong neighbour counts far more than a faint one)
+    multiplied by overlap_fraction() between its channel and the candidate.
+    Networks outside 2.4 GHz are ignored.
+
+    Parameters
+    ----------
+    candidate_channels : iterable of int
+        Channels allowed for the country.
+    freq_signal_tuples : list of (int, float)
+        As returned by get_freq_signal_tuples_from_iw_output().
+
+    Returns
+    -------
+    dict mapping int -> float
+        {channel: score}; lower is better, 0.0 means nothing overlaps it.
+    """
+    heard = [(channels.ISM_24_F2C[freq], signal)
+             for freq, signal in freq_signal_tuples
+             if freq in channels.ISM_24_F2C]
+    scores = {}
+    for candidate in candidate_channels:
+        score = 0.0
+        for heard_channel, signal_dbm in heard:
+            fraction = overlap_fraction(candidate, heard_channel)
+            if fraction > 0:
+                score += fraction * (10 ** (signal_dbm / 10.0))
+        scores[candidate] = score
+    return scores
+
+
+def choose_channel(candidate_channels, scores, current_channel=None):
+    """Pick the channel with the lowest interference score.
+
+    Order of preference:
+      1. the current channel, if its score is no worse than KEEP_CURRENT_FACTOR
+         times the best score (so the AP does not hop on every restart);
+      2. otherwise the lowest score; ties go to 1/6/11, then the lower channel.
+
+    Parameters
+    ----------
+    candidate_channels : list of int
+        Channels allowed for the country.
+    scores : dict mapping int -> float
+        As returned by channel_interference_scores().
+    current_channel : int or None
+        Channel in the existing hostapd.conf.
 
     Returns
     -------
     int
-        An uncontested channel number, or NO_CHANNEL (0) if all are in use.
+        Chosen channel, or NO_CHANNEL (0) if there are no candidates.
     """
+    candidates = list(candidate_channels)
+    if not candidates:
+        return NO_CHANNEL
+    best = min(candidates,
+               key=lambda c: (scores.get(c, 0.0),
+                              c not in NON_OVERLAPPING_24, c))
+    best_score = scores.get(best, 0.0)
+    if current_channel in candidates and \
+            scores.get(current_channel, 0.0) <= best_score * KEEP_CURRENT_FACTOR:
+        return current_channel
+    return best
+
+
+def get_available_uncontested_channel(all_available_channels, scan_output,
+                                      current_channel=None):
+    """Choose the access point channel from a scan of nearby networks.
+
+    Scores every allowed channel with channel_interference_scores() (signal
+    strength and channel overlap of each network heard) and picks one with
+    choose_channel().  With an empty or failed scan nothing is known, so the
+    current channel is kept (if it is allowed); otherwise 1/6/11 first.
+    The scores are printed so the log shows why a channel was chosen.
+
+    Parameters
+    ----------
+    all_available_channels : iterable of int
+        Channels permitted by the regulatory domain for this country code.
+    scan_output : str
+        Raw 'iw dev scan' output.
+    current_channel : int or None
+        Channel in the existing hostapd.conf.
+
+    Returns
+    -------
+    int
+        The chosen channel, or NO_CHANNEL (0) if no channel is allowed.
+    """
+    candidates = list(all_available_channels)
     freq_signal_tuples = get_freq_signal_tuples_from_iw_output(scan_output)
     used_channels = [
         channels.ISM_24_F2C[freq] for freq, _ in freq_signal_tuples
         if freq in channels.ISM_24_F2C  # ignore non 2.4Ghz for the moment
     ]
     click.echo("Available channels are: %s" %
-               (",".join([str(c) for c in all_available_channels])))
+               (",".join([str(c) for c in candidates])))
     click.echo("Used channels are: %s" %
                (",".join([str(c) for c in used_channels])))
-    channel = channel_overlaps_with_others(all_available_channels, used_channels)
-    click.echo("slected channel is: %s" % channel)
+    scores = channel_interference_scores(candidates, freq_signal_tuples)
+    click.echo("Interference scores (lower is better): %s" %
+               (", ".join(["%s=%.3g" % (c, scores[c]) for c in candidates])))
+    channel = choose_channel(candidates, scores, current_channel)
+    if channel == current_channel:
+        click.echo("selected channel is: %s (current channel kept)" % channel)
+    else:
+        click.echo("selected channel is: %s" % channel)
     return channel
+
 
 def detect_regdomain(scan_output):
     """Determine the regulatory domain (country code) to use for this device.

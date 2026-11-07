@@ -276,15 +276,50 @@ def test_overlap_mid_spectrum():
 
 
 def test_uncontested_channels():
-    # 3 knocks out 1-6, 9 knocks out 7-12, 13 knocks out 10-13
+    # Channel choice by interference score (2026-11-06): overlap with each
+    #  network heard (1, 3/4, 1/2, 1/4 for 0-3 channels apart) times its power.
+    # 3, 9 and 13 busy: 1 (1/2 from 3) and 6 (1/4 from 3 and 9) tie; 1 wins.
     assert scan.get_available_uncontested_channel(
         range(1, 14),
         freq_signal_dict_as_scan_output(
             {2422: -50, 2452: -50, 2472: -50}
         )
-    ) == scan.NO_CHANNEL
-    # 3 knocks out 1-5, 9 knocks out 7-12, leaving 13
+    ) == 1
+    # 3 and 9 busy: 13 is four channels from 9, nothing overlaps it.
     assert scan.get_available_uncontested_channel(
         range(1, 14),
         freq_signal_dict_as_scan_output({2422: -50, 2452: -50})
     ) == 13
+
+
+def test_channel_between_busy_neighbours_not_chosen():
+    # Kirk's room 2026-11-06: 2, 8 and 10 busy; old code could pick 9.
+    out = freq_signal_dict_as_scan_output({2417: -40, 2447: -55, 2457: -50})
+    assert scan.get_available_uncontested_channel(range(1, 12), out) == 6
+    assert scan.get_available_uncontested_channel(range(1, 12), out, 9) == 6
+
+
+def test_current_channel_kept_unless_clearly_worse():
+    out = freq_signal_dict_as_scan_output({2412: -60})
+    # 10 and 11 both score 0: keep 10
+    assert scan.get_available_uncontested_channel(range(1, 12), out, 10) == 10
+    scores = {c: 1.0 for c in range(1, 12)}
+    assert scan.choose_channel(range(1, 12), {**scores, 6: 0.6, 7: 1.1}, 7) == 7
+    assert scan.choose_channel(range(1, 12), {**scores, 6: 0.4}, 7) == 6
+
+
+def test_empty_scan_keeps_current_or_prefers_1_6_11():
+    assert scan.get_available_uncontested_channel(range(1, 12), "", 9) == 9
+    assert scan.get_available_uncontested_channel(range(1, 12), "") == 1
+    assert scan.get_available_uncontested_channel(range(1, 12), "", 13) == 1
+    assert scan.get_available_uncontested_channel([], "", 9) == scan.NO_CHANNEL
+
+
+def test_overlap_fraction():
+    assert [scan.overlap_fraction(6, 6 + d) for d in range(5)] == \
+        [1.0, 0.75, 0.5, 0.25, 0.0]
+
+
+def test_max_signal_at_each_freq_returns_map():
+    assert scan.get_max_signal_at_each_freq(
+        [(2412, -50.0), (2412, -40.0), (2437, -70.0)]) == {2412: -40.0, 2437: -70.0}
